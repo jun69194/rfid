@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro RFID en Supabase</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 440px; margin: 24px auto; padding: 0 16px; background: #f5f7fa; }
+    .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    img { width: 100%; max-height: 280px; object-fit: cover; border-radius: 10px; margin-bottom: 12px; }
+    label { display: block; font-weight: 600; margin-top: 12px; font-size: 14px; }
+    input, textarea, button { width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid #cbd5e1; box-sizing: border-box; }
+    button { background: #16a34a; color: #fff; border: none; font-weight: 700; margin-top: 16px; cursor: pointer; }
+    button:disabled { background: #94a3b8; }
+    .dato { margin: 6px 0; font-size: 15px; }
+    .estado { margin-top: 12px; font-size: 14px; color: #334155; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 id="titulo">Cargando tarjeta...</h2>
+    <div id="contenido"></div>
+    <p class="estado" id="estado"></p>
+  </div>
+
+  <script>
+    // Reemplaza con tus credenciales de Supabase (Project Settings -> API)
+    const SUPABASE_URL = "https://xptikvbomfvannprdcaf.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_GaW0T8ojp-4zsu_DaDc2HA_bEoW5Vi5";
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const params = new URLSearchParams(window.location.search);
+    const uid = params.get("uid");
+
+    const titulo = document.getElementById("titulo");
+    const contenido = document.getElementById("contenido");
+    const estado = document.getElementById("estado");
+
+    async function iniciar() {
+      if (!uid) {
+        titulo.textContent = "Falta el UID en el enlace";
+        contenido.innerHTML = "<p>Abre esta página escaneando una tarjeta o agrega <b>?uid=PRUEBA01</b> al final de la URL.</p>";
+        return;
+      }
+
+      const { data, error } = await db
+        .from("tarjetas_rfid")
+        .select("*")
+        .eq("uid", uid)
+        .maybeSingle();
+
+      if (error) {
+        titulo.textContent = "Error de conexión";
+        estado.textContent = error.message;
+        return;
+      }
+
+      if (data) {
+        mostrarPerfil(data);
+      } else {
+        mostrarFormulario(uid);
+      }
+    }
+
+    function mostrarPerfil(registro) {
+      titulo.textContent = "Datos de la tarjeta";
+      contenido.innerHTML = `
+        ${registro.foto_url ? `<img src="${registro.foto_url}" alt="Foto de ${registro.nombre}" />` : ""}
+        <p class="dato"><b>ID:</b> ${registro.id}</p>
+        <p class="dato"><b>UID:</b> ${registro.uid}</p>
+        <p class="dato"><b>Nombre:</b> ${registro.nombre}</p>
+        <p class="dato"><b>Edad:</b> ${registro.edad ?? "No registrada"}</p>
+        <p class="dato"><b>Info extra:</b> ${registro.info_extra ?? "Sin notas"}</p>
+      `;
+    }
+
+    function mostrarFormulario(uidTarjeta) {
+      titulo.textContent = "Registrar tarjeta nueva";
+      contenido.innerHTML = `
+        <p class="dato"><b>UID detectado:</b> ${uidTarjeta}</p>
+        <form id="formRegistro">
+          <label>Nombre</label>
+          <input type="text" id="nombre" required />
+
+          <label>Edad</label>
+          <input type="number" id="edad" min="0" required />
+
+          <label>Info extra</label>
+          <textarea id="info_extra" rows="3"></textarea>
+
+          <label>Foto</label>
+          <input type="file" id="foto" accept="image/*" capture="environment" required />
+
+          <button type="submit" id="btnGuardar">Guardar en Supabase</button>
+        </form>
+      `;
+
+      document.getElementById("formRegistro").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById("btnGuardar");
+        btn.disabled = true;
+        estado.textContent = "Subiendo foto y guardando datos...";
+
+        try {
+          const archivo = document.getElementById("foto").files[0];
+          const nombreArchivo = `${uidTarjeta}_${Date.now()}.jpg`;
+
+          const { error: uploadError } = await db.storage
+            .from("fotos_tarjetas")
+            .upload(nombreArchivo, archivo, { upsert: true });
+
+          if (uploadError) throw uploadError;
+
+          const { data: urlData } = db.storage
+            .from("fotos_tarjetas")
+            .getPublicUrl(nombreArchivo);
+
+          const { data: nuevoRegistro, error: insertError } = await db
+            .from("tarjetas_rfid")
+            .insert({
+              uid: uidTarjeta,
+              nombre: document.getElementById("nombre").value.trim(),
+              edad: parseInt(document.getElementById("edad").value, 10),
+              info_extra: document.getElementById("info_extra").value.trim(),
+              foto_url: urlData.publicUrl
+            })
+            .select()
+            .single();
+
+          if (insertError) throw insertError;
+
+          estado.textContent = "Guardado en la nube correctamente.";
+          mostrarPerfil(nuevoRegistro);
+        } catch (err) {
+          estado.textContent = "Error al guardar: " + err.message;
+          btn.disabled = false;
+        }
+      });
+    }
+
+    iniciar();
+  </script>
+</body>
+</html>
